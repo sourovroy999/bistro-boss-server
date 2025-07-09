@@ -2,17 +2,25 @@ const express=require('express')
 
 const app=express()
 
+const multer = require('multer');
+const upload = multer();
+const axios=require('axios')
+
 const cors=require('cors')
-const { Long, ObjectId } = require('mongodb')
+const {  ObjectId } = require('mongodb')
 const port=process.env.PORT || 5000
 
 const jwt=require('jsonwebtoken')
 
 require('dotenv').config()
 
+ 
 
 //middleware
-app.use(cors())
+app.use(cors({
+  origin:'http://localhost:5173',
+  credentials:true
+}))
 app.use(express.json())
 
 //
@@ -52,13 +60,11 @@ async function run() {
 
     //middleware
     const verifyToken=(req,res,next)=>{
-      console.log( 'inside verify token', req.headers);
-      console.log(req.headers.authorization);
-      
-
+      // console.log( 'inside verify token', req.headers);
+      // console.log(req.headers.authorization);
 
       if(!req.headers.authorization){
-        return res.status(401).send({message: 'forbidden access'})
+        return res.status(401).send({message: 'unauthorized access'})
       }
 
       const token=req.headers.authorization.split(' ')[1];
@@ -69,10 +75,23 @@ async function run() {
         req.decoded=decoded;
         next()
       })
+   }
 
+   //use verify admin after verify token
+   const verifyAdmin= async(req,res, next)=>{
+    const email=req.decoded.email;
+    const query={email: email};
+    const user=await userCollection.findOne(query);
 
+    const isAdmin=user?.role === 'admin';
+    if(!isAdmin){
+      return res.status(403).send({message:'forbidden access'});
 
     }
+    next()
+   }
+
+  
 
     //users related api
  
@@ -92,19 +111,36 @@ async function run() {
       res.send(result)
     })
 
-    app.get('/users',verifyToken, async(req,res)=>{
+    app.get('/users/admin/:email', verifyToken, async(req,res)=>{
+      const email=req.params.email;
+      if(email !== req.decoded.email ){
+        return res.status(403).send({message: 'forbidden access'})
+      }
+
+      const query={email: email};
+      const user=await userCollection.findOne(query);
+      let admin= false;
+      if(user){
+        admin=user?.role === 'admin';
+
+      }
+
+      res.send({admin})
+    })
+
+    app.get('/users',verifyToken, verifyAdmin, async(req,res)=>{
 
       const result=await userCollection.find().toArray();
       res.send(result)
     })
-    app.delete('/users/:id', async(req,res)=>{
+    app.delete('/users/:id', verifyToken, verifyAdmin, async(req,res)=>{
       const id=req.params.id;
       const query={_id:new ObjectId(id)}
       const result=await userCollection.deleteOne(query);
       res.send(result);
     })
 
-    app.patch('/users/admin/:id', async(req,res)=>{
+    app.patch('/users/admin/:id', verifyToken, verifyAdmin, async(req,res)=>{
       const id=req.params.id;
       const filter={_id: new ObjectId(id)}
       const updatedDoc={
@@ -124,10 +160,43 @@ async function run() {
         const result=await menuCollection.find().toArray();
         res.send(result)
     })
+    app.post('/menu',verifyToken, verifyAdmin, async(req,res)=>{
+      const item=req.body;
+      const result=await menuCollection.insertOne(item);
+      res.send(result)
+    })
+
     app.get('/reviews', async(req, res)=>{
         const result=await reviewCollection.find().toArray();
         res.send(result)
     })
+
+     //image upload api
+   app.post('/upload-image', verifyToken, verifyAdmin, upload.single('image'), async(req,res)=>{
+    try{
+      const imageFile=req.file;
+      const formData= new FormData();
+      formData.append('image', imageFile.buffer.toString('base64'));
+    const imgbbResponse = await axios.post(
+      `https://api.imgbb.com/1/upload?key=${process.env.VITE_IMAGE_HOSTING_KEY}`,
+      formData,
+      {
+        headers: {
+          'Content-Type': 'multipart/form-data'
+        }
+      }
+    );
+    
+    res.json(imgbbResponse.data);
+    } catch(error){
+          res.status(500).json({ error: 'Image upload failed' });
+
+    }
+   })
+
+   
+
+
 
 
     // carts collection
