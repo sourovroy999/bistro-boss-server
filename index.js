@@ -32,6 +32,7 @@ app.use(express.json())
 
 
 const { MongoClient, ServerApiVersion } = require('mongodb');
+const { from } = require('form-data');
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.iy6spfv.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
 
 const client = new MongoClient(uri, {
@@ -343,6 +344,72 @@ async function run() {
         revenue
       })
     })
+
+
+    //order status
+    /**
+     * ---non-efficient way
+     * 
+     * 1.load all the payments
+     * 2.for each menuItemsId(which is an array), go find the item from menu collection
+     * 3. for each item in the menu collection that you found from a payment entry (document).
+     * 
+     * 
+     * ------efficient way
+     * -->
+     * (use aggrete pipeline)
+     * 
+     */
+
+    //using aggregate pipeline
+
+    app.get('/order-stats',verifyToken, verifyAdmin, async(req,res)=>{
+      const result=await paymentCollection.aggregate([
+
+        //step 1: unwind menuItemIds
+        {$unwind: '$menuItemIds'},
+           // Step 2: Convert to ObjectId if stored as string
+      {
+        $addFields: {
+          menuItemObjectId: { $toObjectId: '$menuItemIds' }
+        }
+      },
+
+        //step 3: lookup menu items
+        {
+          $lookup:{
+            from:'menu',
+            localField:'menuItemObjectId',
+            foreignField:'_id',
+            as:'menuItems'
+          }
+        },
+
+
+         // Step 4: Flatten the menuItems array
+      { $unwind: '$menuItems' },
+
+      //step:5 group by category
+      {
+        $group:{
+          _id:'$menuItems.category',
+          totalQuantity:{$sum:1},
+          totalRevenue:{$sum:'$menuItems.price'}
+        }
+      },
+      {
+        $project:{
+          _id:0,
+          category:'$_id',
+          totalQuantity:1,
+          totalRevenue:1
+        }
+      }
+
+      ]).toArray();
+      res.send(result)
+    })
+
 
 
 
